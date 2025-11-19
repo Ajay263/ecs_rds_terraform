@@ -22,7 +22,7 @@ module "bastion" {
   version = "5.8.0"
 
   associate_public_ip_address = true
-  instance_type               = "t3a.micro"
+  instance_type               = "t3.micro"
   key_name                    = aws_key_pair.bastion.key_name
   monitoring                  = true
   name                        = "${var.name}-bastion"
