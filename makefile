@@ -25,7 +25,7 @@ build-image:
 		.
 
 build-image-login:
-	aws ecr get-login-password --region us-west-2 | docker login \
+	aws ecr get-login-password --region us-east-1 | docker login \
 		--username AWS \
 		--password-stdin \
 		$(AWS_ECR_DOMAIN)
