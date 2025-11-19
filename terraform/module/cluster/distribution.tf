@@ -3,7 +3,7 @@ resource "aws_cloudfront_vpc_origin" "this" {
     arn                    = aws_lb.this.arn
     http_port              = 80
     https_port             = 443
-    name                   = "cluster-${var.name}"
+    name                   = "cluster-${var.name}-origin-v2"
     origin_protocol_policy = "http-only"
 
     origin_ssl_protocols {
