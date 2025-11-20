@@ -37,9 +37,6 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
       
-    #   - name: Terraform Init (base)
-    #     run: terraform init
-      
       - name: Generate Infracost cost estimate baseline
         run: |
           infracost breakdown --path=. \
@@ -48,7 +45,6 @@ jobs:
       
       - name: Checkout PR branch
         uses: actions/checkout@v4
-      
       
       - name: Generate Infracost diff
         run: |
@@ -64,4 +60,5 @@ jobs:
                                      --github-token=${{ github.token }} \
                                      --pull-request=${{ github.event.pull_request.number }} \
                                      --behavior=update \
+                                     --show-all-projects=true \
                                      --policy-path ../policies/cost.rego
