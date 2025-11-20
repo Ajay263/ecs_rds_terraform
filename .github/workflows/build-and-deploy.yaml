@@ -293,4 +293,4 @@ jobs:
             --cluster "${CLUSTER_NAME}" \
             --services "${SERVICE_NAME}"
           
-          echo "✅ Deployment completed successfully"
+          echo "✅ Deployment completed successfully."
