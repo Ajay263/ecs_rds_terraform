@@ -84,18 +84,42 @@ jobs:
         run: |
           docker pull ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
 
+      - name: Promote image tag to staging
+        env:
+          IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
+        run: |
+          echo "Tagging image $IMAGE_TAG as staging"
+          
+          docker pull ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
+
+          docker tag \
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG \
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:staging
+
+          docker push \
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:staging
+          
+          echo "✅ Image promoted to staging tag"
+
       - name: Run database migrations
         env:
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
           CLUSTER_NAME: ${{ steps.vars.outputs.cluster }}
           SERVICE_NAME: ${{ steps.vars.outputs.service }}
         run: |
-          # Get database connection string from SSM Parameter Store
+          # Option 1: Fetch from SSM and pass as environment variable (current approach)
           DB_STRING=$(aws ssm get-parameter \
             --name "/staging/service/postgres-url" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text)
+
+          if [ -z "$DB_STRING" ]; then
+            echo "❌ Failed to retrieve database connection string from SSM"
+            exit 1
+          fi
+
+          echo "✅ Retrieved database connection string from SSM"
 
           # Create overrides file with environment variables
           cat > overrides.json <<EOF
@@ -112,6 +136,28 @@ jobs:
             ]
           }
           EOF
+          
+          # Alternative Option 2: Use ECS secrets (more secure - uncomment to use)
+          # This requires your task execution role to have ssm:GetParameters permission
+          # cat > overrides.json <<EOF
+          # {
+          #   "containerOverrides": [
+          #     {
+          #       "name": "service",
+          #       "environment": [
+          #         { "name": "GOOSE_DRIVER", "value": "postgres" }
+          #       ],
+          #       "secrets": [
+          #         {
+          #           "name": "GOOSE_DBSTRING",
+          #           "valueFrom": "/staging/service/postgres-url"
+          #         }
+          #       ],
+          #       "command": ["goose", "-dir", "migrations", "up"]
+          #     }
+          #   ]
+          # }
+          # EOF
 
           echo "Starting migration task..."
           
@@ -247,12 +293,19 @@ jobs:
           CLUSTER_NAME: ${{ steps.vars.outputs.cluster }}
           SERVICE_NAME: ${{ steps.vars.outputs.service }}
         run: |
-          # Get database connection string from SSM Parameter Store
+          # Option 1: Fetch from SSM and pass as environment variable (current approach)
           DB_STRING=$(aws ssm get-parameter \
             --name "/prod/service/postgres-url" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text)
+
+          if [ -z "$DB_STRING" ]; then
+            echo "❌ Failed to retrieve database connection string from SSM"
+            exit 1
+          fi
+
+          echo "✅ Retrieved database connection string from SSM"
 
           # Create overrides file with environment variables
           cat > overrides.json <<EOF
@@ -269,6 +322,28 @@ jobs:
             ]
           }
           EOF
+          
+          # Alternative Option 2: Use ECS secrets (more secure - uncomment to use)
+          # This requires your task execution role to have ssm:GetParameters permission
+          # cat > overrides.json <<EOF
+          # {
+          #   "containerOverrides": [
+          #     {
+          #       "name": "service",
+          #       "environment": [
+          #         { "name": "GOOSE_DRIVER", "value": "postgres" }
+          #       ],
+          #       "secrets": [
+          #         {
+          #           "name": "GOOSE_DBSTRING",
+          #           "valueFrom": "/prod/service/postgres-url"
+          #         }
+          #       ],
+          #       "command": ["goose", "-dir", "migrations", "up"]
+          #     }
+          #   ]
+          # }
+          # EOF
 
           echo "Starting migration task..."
           
