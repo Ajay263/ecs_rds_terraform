@@ -14,7 +14,7 @@ resources_by_type(type) := [r | r := resource_changes[_]; r.type == type]
 # ==============================================================================
 
 # Define allowed instance types
-allowed_instance_types := ["t3.medium"]
+allowed_instance_types := ["t3.micro", "t3.small"]
 
 # Deny instances with disallowed instance types
 deny contains msg if {
