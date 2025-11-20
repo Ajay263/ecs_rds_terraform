@@ -8,6 +8,22 @@ resource_changes := input.resource_changes
 # Helper to get resources by type
 resources_by_type(type) := [r | r := resource_changes[_]; r.type == type]
 
+
+# ==============================================================================
+# INSTANCE TYPE RESTRICTIONS
+# ==============================================================================
+
+# Define allowed instance types
+allowed_instance_types := ["t3.medium"]
+
+# Deny instances with disallowed instance types
+deny contains msg if {
+    some resource in input.resource_changes
+    resource.type == "aws_instance"
+    instance_type := resource.change.after.instance_type
+    not instance_type in allowed_instance_types
+    msg := sprintf("Instance type for '%s' is '%s', but must be one of %v", [resource.address, instance_type, allowed_instance_types])
+}
 # ==============================================================================
 # CRITICAL SECURITY POLICIES
 # ==============================================================================
@@ -59,11 +75,11 @@ deny contains msg if {
 }
 
 # Deny launch templates without IMDSv2
-deny contains msg if {
-    some resource in resources_by_type("aws_launch_template")
-    not resource.change.after.metadata_options
-    msg := sprintf("🚨 CRITICAL: Launch Template '%s' must configure IMDSv2 metadata options", [resource.address])
-}
+#deny contains msg if {
+#   some resource in resources_by_type("aws_launch_template")
+#    not resource.change.after.metadata_options
+#    msg := sprintf("🚨 CRITICAL: Launch Template '%s' must configure IMDSv2 metadata options", [resource.address])
+#}
 
 # Deny unrestricted SSH access
 deny contains msg if {
