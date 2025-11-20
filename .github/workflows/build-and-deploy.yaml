@@ -77,7 +77,6 @@ jobs:
         run: |
           echo "cluster=staging" >> $GITHUB_OUTPUT
           echo "service=staging-service" >> $GITHUB_OUTPUT
-          echo "task-family=staging-service" >> $GITHUB_OUTPUT
 
       - name: Pull Docker image
         env:
@@ -91,12 +90,14 @@ jobs:
           CLUSTER_NAME: ${{ steps.vars.outputs.cluster }}
           SERVICE_NAME: ${{ steps.vars.outputs.service }}
         run: |
+          # Get database connection string from SSM Parameter Store
           DB_STRING=$(aws ssm get-parameter \
             --name "/staging/service/postgres-url" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text)
 
+          # Create overrides file with environment variables
           cat > overrides.json <<EOF
           {
             "containerOverrides": [
@@ -113,6 +114,8 @@ jobs:
           EOF
 
           echo "Starting migration task..."
+          
+          # Run the migration task
           TASK_ARN=$(aws ecs run-task \
             --cluster "${CLUSTER_NAME}" \
             --task-definition "${SERVICE_NAME}" \
@@ -123,30 +126,49 @@ jobs:
 
           echo "Migration task ARN: ${TASK_ARN}"
 
+          # Check if task was created successfully
           if [ "$TASK_ARN" == "None" ] || [ -z "$TASK_ARN" ]; then
             echo "❌ Failed to start migration task"
             exit 1
           fi
 
+          # Wait for the task to complete
+          echo "Waiting for migration task to complete..."
           aws ecs wait tasks-stopped \
             --cluster "${CLUSTER_NAME}" \
             --tasks "${TASK_ARN}"
 
+          # Get task exit code
           TASK_INFO=$(aws ecs describe-tasks \
             --cluster "${CLUSTER_NAME}" \
-            --tasks "${TASK_ARN}" \
-            --query 'tasks[0]')
+            --tasks "${TASK_ARN}")
 
-          EXIT_CODE=$(echo "$TASK_INFO" | jq -r '.containers[0].exitCode // "None"')
-          STOPPED_REASON=$(echo "$TASK_INFO" | jq -r '.stoppedReason // "Unknown"')
+          EXIT_CODE=$(echo "$TASK_INFO" | jq -r '.tasks[0].containers[0].exitCode // "None"')
+          STOPPED_REASON=$(echo "$TASK_INFO" | jq -r '.tasks[0].stoppedReason // "Unknown"')
+          LAST_STATUS=$(echo "$TASK_INFO" | jq -r '.tasks[0].lastStatus // "Unknown"')
 
-          if [ "$EXIT_CODE" != "0" ]; then
-            echo "❌ Migration failed with exit code: ${EXIT_CODE}"
-            echo "Stopped reason: ${STOPPED_REASON}"
+          echo "Task Status: ${LAST_STATUS}"
+          echo "Exit Code: ${EXIT_CODE}"
+          echo "Stopped Reason: ${STOPPED_REASON}"
 
-            echo "Fetching CloudWatch logs..."
-            aws logs tail /aws/ecs/${CLUSTER_NAME} --since 10m || true
-
+          # Check for task failure
+          if [ "$EXIT_CODE" == "None" ] || [ "$EXIT_CODE" != "0" ]; then
+            echo "❌ Migration failed"
+            echo "Task details:"
+            echo "$TASK_INFO" | jq '.tasks[0]'
+            
+            # Try to get CloudWatch logs
+            CONTAINER_NAME="service"
+            TASK_ID=$(echo "${TASK_ARN}" | rev | cut -d'/' -f1 | rev)
+            LOG_GROUP="/ecs/${CLUSTER_NAME}"
+            LOG_STREAM="ecs/${CONTAINER_NAME}/${TASK_ID}"
+            
+            echo "Attempting to fetch logs from ${LOG_GROUP}/${LOG_STREAM}..."
+            aws logs get-log-events \
+              --log-group-name "${LOG_GROUP}" \
+              --log-stream-name "${LOG_STREAM}" \
+              --limit 50 || echo "Could not fetch CloudWatch logs"
+            
             exit 1
           fi
 
@@ -179,6 +201,7 @@ jobs:
             --query 'service.serviceName' \
             --output text
 
+          echo "Waiting for ECS service to stabilize..."
           aws ecs wait services-stable \
             --cluster "${CLUSTER_NAME}" \
             --services "${SERVICE_NAME}"
@@ -211,7 +234,6 @@ jobs:
         run: |
           echo "cluster=prod" >> $GITHUB_OUTPUT
           echo "service=prod-service" >> $GITHUB_OUTPUT
-          echo "task-family=prod-service" >> $GITHUB_OUTPUT
 
       - name: Pull Docker image
         env:
@@ -225,12 +247,14 @@ jobs:
           CLUSTER_NAME: ${{ steps.vars.outputs.cluster }}
           SERVICE_NAME: ${{ steps.vars.outputs.service }}
         run: |
+          # Get database connection string from SSM Parameter Store
           DB_STRING=$(aws ssm get-parameter \
             --name "/prod/service/postgres-url" \
             --with-decryption \
             --query 'Parameter.Value' \
             --output text)
 
+          # Create overrides file with environment variables
           cat > overrides.json <<EOF
           {
             "containerOverrides": [
@@ -245,6 +269,67 @@ jobs:
             ]
           }
           EOF
+
+          echo "Starting migration task..."
+          
+          # Run the migration task
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${CLUSTER_NAME}" \
+            --task-definition "${SERVICE_NAME}" \
+            --launch-type EC2 \
+            --overrides file://overrides.json \
+            --query 'tasks[0].taskArn' \
+            --output text)
+
+          echo "Migration task ARN: ${TASK_ARN}"
+
+          # Check if task was created successfully
+          if [ "$TASK_ARN" == "None" ] || [ -z "$TASK_ARN" ]; then
+            echo "❌ Failed to start migration task"
+            exit 1
+          fi
+
+          # Wait for the task to complete
+          echo "Waiting for migration task to complete..."
+          aws ecs wait tasks-stopped \
+            --cluster "${CLUSTER_NAME}" \
+            --tasks "${TASK_ARN}"
+
+          # Get task exit code
+          TASK_INFO=$(aws ecs describe-tasks \
+            --cluster "${CLUSTER_NAME}" \
+            --tasks "${TASK_ARN}")
+
+          EXIT_CODE=$(echo "$TASK_INFO" | jq -r '.tasks[0].containers[0].exitCode // "None"')
+          STOPPED_REASON=$(echo "$TASK_INFO" | jq -r '.tasks[0].stoppedReason // "Unknown"')
+          LAST_STATUS=$(echo "$TASK_INFO" | jq -r '.tasks[0].lastStatus // "Unknown"')
+
+          echo "Task Status: ${LAST_STATUS}"
+          echo "Exit Code: ${EXIT_CODE}"
+          echo "Stopped Reason: ${STOPPED_REASON}"
+
+          # Check for task failure
+          if [ "$EXIT_CODE" == "None" ] || [ "$EXIT_CODE" != "0" ]; then
+            echo "❌ Migration failed"
+            echo "Task details:"
+            echo "$TASK_INFO" | jq '.tasks[0]'
+            
+            # Try to get CloudWatch logs
+            CONTAINER_NAME="service"
+            TASK_ID=$(echo "${TASK_ARN}" | rev | cut -d'/' -f1 | rev)
+            LOG_GROUP="/ecs/${CLUSTER_NAME}"
+            LOG_STREAM="ecs/${CONTAINER_NAME}/${TASK_ID}"
+            
+            echo "Attempting to fetch logs from ${LOG_GROUP}/${LOG_STREAM}..."
+            aws logs get-log-events \
+              --log-group-name "${LOG_GROUP}" \
+              --log-stream-name "${LOG_STREAM}" \
+              --limit 50 || echo "Could not fetch CloudWatch logs"
+            
+            exit 1
+          fi
+
+          echo "✅ Migrations completed successfully"
 
       - name: Promote image tag
         env:
@@ -273,8 +358,9 @@ jobs:
             --query 'service.serviceName' \
             --output text
 
+          echo "Waiting for ECS service to stabilize..."
           aws ecs wait services-stable \
             --cluster "${CLUSTER_NAME}" \
             --services "${SERVICE_NAME}"
 
-          echo "✅ Deployment completed successfully."
+          echo "✅ Deployment completed successfully"
