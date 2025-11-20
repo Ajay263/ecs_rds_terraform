@@ -22,13 +22,15 @@ RUN go build -o main .
 FROM alpine:latest
 
 # Set environment variables
-ENV DOCKERIZE_VERSION=v0.9.3
+ENV DOCKERIZE_VERSION=v0.7.0
 
 # Install dependencies
-RUN apk update --no-cache \
-    && apk add --no-cache wget openssl \
-    && wget -O - https://github.com/jwilder/dockerize/releases/download/$DOCKERIZE_VERSION/dockerize-alpine-linux-amd64-$DOCKERIZE_VERSION.tar.gz | tar xzf - -C /usr/local/bin \
-    && apk del wget
+RUN apk update --no-cache && \
+    apk add --no-cache wget openssl ca-certificates && \
+    wget https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz && \
+    tar -C /usr/local/bin -xzvf dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz && \
+    rm dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz && \
+    apk del wget
 
 # Set the working directory
 WORKDIR /app
