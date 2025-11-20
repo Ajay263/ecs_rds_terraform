@@ -153,3 +153,4 @@ resource "aws_ecs_cluster_capacity_providers" "this" {
   capacity_providers = [for provider_name, provider in var.capacity_providers : aws_ecs_capacity_provider.this[provider_name].name]
   cluster_name       = var.name
 }
+#

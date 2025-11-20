@@ -42,16 +42,13 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ steps.set-tag.outputs.tag }}
         run: |
-          # Build the Docker image
           docker buildx build \
             --platform "linux/amd64" \
             --tag "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
             --load \
             .
           
-          # Push to ECR
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          
           echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
   deploy-staging:
@@ -94,19 +91,27 @@ jobs:
           CLUSTER_NAME: ${{ steps.vars.outputs.cluster }}
           SERVICE_NAME: ${{ steps.vars.outputs.service }}
         run: |
-          # Create container overrides for migration
+          DB_STRING=$(aws ssm get-parameter \
+            --name "/staging/service/postgres-url" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text)
+
           cat > overrides.json <<EOF
           {
             "containerOverrides": [
               {
                 "name": "service",
+                "environment": [
+                  { "name": "GOOSE_DRIVER", "value": "postgres" },
+                  { "name": "GOOSE_DBSTRING", "value": "${DB_STRING}" }
+                ],
                 "command": ["goose", "-dir", "migrations", "up"]
               }
             ]
           }
           EOF
-          
-          # Run migration task
+
           echo "Starting migration task..."
           TASK_ARN=$(aws ecs run-task \
             --cluster "${CLUSTER_NAME}" \
@@ -115,48 +120,50 @@ jobs:
             --overrides file://overrides.json \
             --query 'tasks[0].taskArn' \
             --output text)
-          
+
           echo "Migration task ARN: ${TASK_ARN}"
-          
-          # Wait for task to complete
-          echo "Waiting for migration task to complete..."
+
+          if [ "$TASK_ARN" == "None" ] || [ -z "$TASK_ARN" ]; then
+            echo "❌ Failed to start migration task"
+            exit 1
+          fi
+
           aws ecs wait tasks-stopped \
             --cluster "${CLUSTER_NAME}" \
             --tasks "${TASK_ARN}"
-          
-          # Check exit code
-          EXIT_CODE=$(aws ecs describe-tasks \
+
+          TASK_INFO=$(aws ecs describe-tasks \
             --cluster "${CLUSTER_NAME}" \
             --tasks "${TASK_ARN}" \
-            --query 'tasks[0].containers[0].exitCode' \
-            --output text)
-          
+            --query 'tasks[0]')
+
+          EXIT_CODE=$(echo "$TASK_INFO" | jq -r '.containers[0].exitCode // "None"')
+          STOPPED_REASON=$(echo "$TASK_INFO" | jq -r '.stoppedReason // "Unknown"')
+
           if [ "$EXIT_CODE" != "0" ]; then
             echo "❌ Migration failed with exit code: ${EXIT_CODE}"
-            
-            # Get logs for debugging
-            LOG_STREAM=$(aws ecs describe-tasks \
-              --cluster "${CLUSTER_NAME}" \
-              --tasks "${TASK_ARN}" \
-              --query 'tasks[0].containers[0].name' \
-              --output text)
-            
-            echo "Check CloudWatch logs for details: /aws/ecs/${CLUSTER_NAME}/${LOG_STREAM}"
+            echo "Stopped reason: ${STOPPED_REASON}"
+
+            echo "Fetching CloudWatch logs..."
+            aws logs tail /aws/ecs/${CLUSTER_NAME} --since 10m || true
+
             exit 1
           fi
-          
+
           echo "✅ Migrations completed successfully"
 
       - name: Promote image tag
         env:
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
         run: |
-          # Tag the image as 'staging'
           docker pull ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
+
           docker tag \
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG \
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:staging
-          docker push ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:staging
+
+          docker push \
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:staging
 
       - name: Deploy to ECS
         env:
@@ -164,19 +171,18 @@ jobs:
           SERVICE_NAME: ${{ steps.vars.outputs.service }}
         run: |
           echo "Updating ECS service: ${SERVICE_NAME}"
-          
+
           aws ecs update-service \
             --cluster "${CLUSTER_NAME}" \
             --service "${SERVICE_NAME}" \
             --force-new-deployment \
             --query 'service.serviceName' \
             --output text
-          
-          echo "Waiting for service to stabilize..."
+
           aws ecs wait services-stable \
             --cluster "${CLUSTER_NAME}" \
             --services "${SERVICE_NAME}"
-          
+
           echo "✅ Deployment completed successfully"
 
   deploy-production:
@@ -219,60 +225,39 @@ jobs:
           CLUSTER_NAME: ${{ steps.vars.outputs.cluster }}
           SERVICE_NAME: ${{ steps.vars.outputs.service }}
         run: |
-          # Create container overrides for migration
+          DB_STRING=$(aws ssm get-parameter \
+            --name "/prod/service/postgres-url" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text)
+
           cat > overrides.json <<EOF
           {
             "containerOverrides": [
               {
                 "name": "service",
+                "environment": [
+                  { "name": "GOOSE_DRIVER", "value": "postgres" },
+                  { "name": "GOOSE_DBSTRING", "value": "${DB_STRING}" }
+                ],
                 "command": ["goose", "-dir", "migrations", "up"]
               }
             ]
           }
           EOF
-          
-          # Run migration task
-          echo "Starting migration task..."
-          TASK_ARN=$(aws ecs run-task \
-            --cluster "${CLUSTER_NAME}" \
-            --task-definition "${SERVICE_NAME}" \
-            --launch-type EC2 \
-            --overrides file://overrides.json \
-            --query 'tasks[0].taskArn' \
-            --output text)
-          
-          echo "Migration task ARN: ${TASK_ARN}"
-          
-          # Wait for task to complete
-          echo "Waiting for migration task to complete..."
-          aws ecs wait tasks-stopped \
-            --cluster "${CLUSTER_NAME}" \
-            --tasks "${TASK_ARN}"
-          
-          # Check exit code
-          EXIT_CODE=$(aws ecs describe-tasks \
-            --cluster "${CLUSTER_NAME}" \
-            --tasks "${TASK_ARN}" \
-            --query 'tasks[0].containers[0].exitCode' \
-            --output text)
-          
-          if [ "$EXIT_CODE" != "0" ]; then
-            echo "❌ Migration failed with exit code: ${EXIT_CODE}"
-            exit 1
-          fi
-          
-          echo "✅ Migrations completed successfully"
 
       - name: Promote image tag
         env:
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
         run: |
-          # Tag the image as 'prod'
           docker pull ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
+
           docker tag \
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG \
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:prod
-          docker push ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:prod
+
+          docker push \
+            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:prod
 
       - name: Deploy to ECS
         env:
@@ -280,17 +265,16 @@ jobs:
           SERVICE_NAME: ${{ steps.vars.outputs.service }}
         run: |
           echo "Updating ECS service: ${SERVICE_NAME}"
-          
+
           aws ecs update-service \
             --cluster "${CLUSTER_NAME}" \
             --service "${SERVICE_NAME}" \
             --force-new-deployment \
             --query 'service.serviceName' \
             --output text
-          
-          echo "Waiting for service to stabilize..."
+
           aws ecs wait services-stable \
             --cluster "${CLUSTER_NAME}" \
             --services "${SERVICE_NAME}"
-          
+
           echo "✅ Deployment completed successfully."
