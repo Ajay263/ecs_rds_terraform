@@ -15,32 +15,28 @@ jobs:
         with:
           go-version: '1.24.2'  
           cache: true
+      
+      - name: Install dependencies
+        run: go get .
           
-      - name: Install SCA tool (CRDA)
-        uses: redhat-actions/openshift-tools-installer@v1
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/golang@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SYNK_TOKEN }}
         with:
-          source: github
-          github_pat: ${{ github.token }}
-          crda: "latest"
+          args: --sarif-file-output=snyk.sarif
           
-      - name: SCA (CRDA) Scan
-        id: scan
-        uses: redhat-actions/crda@v1
+      - name: Upload result to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
         with:
-          manifest_file: go.mod  # Use go.mod for Go projects
-          snyk_token: ${{ secrets.SYNK_TOKEN }}
-          fail_on: never
+          sarif_file: snyk.sarif
           
-      - name: Print JSON analysis report
-        if: ${{ always() && steps.scan.outputs.crda_report_json }}
-        run: cat ${{ steps.scan.outputs.crda_report_json }}
-        
-      - name: Print SARIF analysis report
-        if: ${{ always() && steps.scan.outputs.crda_report_sarif }}
-        run: cat ${{ steps.scan.outputs.crda_report_sarif }}
-        
-      - name: Print Report Link
-        run: echo ${{ steps.scan.outputs.report_link }}
-        
-      - name: Print Artifact Name
-        run: echo ${{ steps.scan.outputs.artifact_name }}
+      - name: Run Snyk to monitor
+        uses: snyk/actions/golang@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SYNK_TOKEN }}
+        with:
+          command: monitor
