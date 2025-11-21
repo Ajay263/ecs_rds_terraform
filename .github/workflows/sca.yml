@@ -1,62 +1,46 @@
-name: 10 Build pipeline
+name: SCA for Go Application
 on:
   workflow_dispatch:
   workflow_call:
 jobs:
-  build:
-    permissions:
-      contents: read
-      issues: read
-      checks: write
-      pull-requests: write
-    runs-on: ubuntu-latest
+  sca:
+    runs-on: ubuntu-20.04
+    name: SCA Go project
     steps:
-    - uses: actions/checkout@v5
-    
-    - name: Setup Go
-      uses: actions/setup-go@v6
-      with:
-        go-version: '1.24.2'
-        cache: true
-    
-    - name: Install dependencies
-      run: go get .
-    
-    # Build the Go application
-    - name: Build with Go
-      run: go build -v ./...
-    
-    - name: Create binary artifact directory
-      run: |
-        mkdir candidate-binary
-        # Copy any built executables
-        find . -maxdepth 1 -type f -executable ! -name ".*" -exec cp {} candidate-binary/ \; 2>/dev/null || true
-    
-    # Test with Go and convert to JUnit XML
-    - name: Install go-junit-report
-      run: go install github.com/jstemmer/go-junit-report/v2@latest
-    
-    - name: Test with Go
-      run: |
-        go test -v ./... 2>&1 | tee test-output.txt
-        cat test-output.txt | go-junit-report -set-exit-code > test-results.xml
-      continue-on-error: true
-    
-    - name: Create test results directory
-      run: mkdir test-results && mv test-results.xml test-results/
-    
-    - uses: actions/upload-artifact@v4
-      with:
-        name: Application-Binary
-        path: candidate-binary
-    
-    - uses: actions/upload-artifact@v4
-      with:
-        name: Test-Results
-        path: test-results
-    
-    - name: Publish Test Results
-      uses: EnricoMi/publish-unit-test-result-action@v2
-      if: always()
-      with:
-        files: "test-results/**/*.xml"
+      - name: Checkout action
+        uses: actions/checkout@v5
+        
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.2'  
+          cache: true
+          
+      - name: Install SCA tool (CRDA)
+        uses: redhat-actions/openshift-tools-installer@v1
+        with:
+          source: github
+          github_pat: ${{ github.token }}
+          crda: "latest"
+          
+      - name: SCA (CRDA) Scan
+        id: scan
+        uses: redhat-actions/crda@v1
+        with:
+          manifest_file: go.mod  # Use go.mod for Go projects
+          snyk_token: ${{ secrets.OUR_SNYK_KEY }}
+          fail_on: never
+          
+      - name: Print JSON analysis report
+        if: ${{ always() && steps.scan.outputs.crda_report_json }}
+        run: cat ${{ steps.scan.outputs.crda_report_json }}
+        
+      - name: Print SARIF analysis report
+        if: ${{ always() && steps.scan.outputs.crda_report_sarif }}
+        run: cat ${{ steps.scan.outputs.crda_report_sarif }}
+        
+      - name: Print Report Link
+        run: echo ${{ steps.scan.outputs.report_link }}
+        
+      - name: Print Artifact Name
+        run: echo ${{ steps.scan.outputs.artifact_name }}
