@@ -5,7 +5,7 @@ on:
 jobs:
   sca:
     runs-on: ubuntu-20.04
-    name: SCA Go project
+    name: SCA
     steps:
       - name: Checkout action
         uses: actions/checkout@v5
