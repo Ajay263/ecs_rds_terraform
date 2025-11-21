@@ -28,7 +28,7 @@ jobs:
         uses: redhat-actions/crda@v1
         with:
           manifest_file: go.mod  # Use go.mod for Go projects
-          snyk_token: ${{ secrets.OUR_SNYK_KEY }}
+          snyk_token: ${{ secrets.SYNK_TOKEN }}
           fail_on: never
           
       - name: Print JSON analysis report
