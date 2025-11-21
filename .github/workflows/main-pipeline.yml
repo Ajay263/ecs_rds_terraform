@@ -6,12 +6,20 @@ on:
       - '**/*.md'
       - '**/*.txt'
   workflow_dispatch:
+
+# Grant permissions that will be inherited by called workflows
+permissions:
+  contents: read
+  issues: read
+  checks: write
+  pull-requests: write
+  security-events: write  # Needed for SCA to upload SARIF files
   
 jobs:
   build:
     name: Build
     uses: ./.github/workflows/build.yml
-    secrets: inherit #https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idsecretsinherit
+    secrets: inherit
 
   sca:
     needs: build
