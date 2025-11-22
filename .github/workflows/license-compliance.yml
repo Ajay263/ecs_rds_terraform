@@ -6,26 +6,41 @@ on:
 
 jobs:
   license-finder:
-  # Using https://github.com/pivotal/LicenseFinder
+    # Using https://github.com/pivotal/LicenseFinder
     runs-on: ubuntu-latest
     steps:
       - name: 'Checkout Repository'
         uses: actions/checkout@v5
-      - name: 'License Finder fix with mvnw'
-        run: rm mvnw
+
+      - name: 'Setup Go'
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.2'
+          cache: true
+
+      - name: 'Download Go dependencies'
+        run: |
+          go mod download
+          go mod verify
+
       - name: 'License Finder'
         uses: jmservera/license-finder-action@main
         with:
-          permitted-licenses: MIT,Apache-2.0,BSD,EPL1
+          permitted-licenses: MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,EPL-1.0
+          # Common Go dependencies you might want to approve
           approved-dependencies: |
-                                 hamcrest,hamcrest-core,hamcrest-library
-                                 junit-jupiter,junit-jupiter-api,junit-jupiter-engine,javax.annotation-api
+            golang.org/x/sys
+            golang.org/x/net
+            golang.org/x/crypto
+            golang.org/x/text
+
       - name: Publish Test Results
-        uses: EnricoMi/publish-unit-test-result-action@v2.2.0
+        uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
           junit_files: "license_finder_report.xml"
           check_name: "License Compliance Check"
+
       - name: 'Upload Dependency Review Report'
         if: always()
         uses: actions/upload-artifact@v4
