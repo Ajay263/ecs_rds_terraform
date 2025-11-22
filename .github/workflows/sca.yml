@@ -1,62 +1,68 @@
-name: SCA for Go Application
+name: 20 SCA
+
 on:
   workflow_dispatch:
   workflow_call:
+
 jobs:
   sca:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ "ubuntu-latest" ] # [ "macos-latest", "windows-latest", "ubuntu-20.04" ]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     name: SCA
     steps:
       - name: Checkout action
         uses: actions/checkout@v5
-        
+
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.24.2'  
-          cache: false  # Disable cache to ensure fresh dependency resolution
-      
+          distribution: 'go'
+          go-version: '1.24.2'
+          cache: true
+
       - name: Download dependencies
         run: |
           go mod download
           go mod verify
-          
-      - name: Debug - Check actual dependencies
-        run: |
-          echo "=== Installed Go modules ==="
-          go list -m all
-          echo ""
-          echo "=== Dependency tree ==="
-          go mod graph | head -20
-          
-      - name: Run Snyk to check for vulnerabilities
-        uses: snyk/actions/golang@master
-        continue-on-error: true
-        env:
-          SNYK_TOKEN: ${{ secrets.SYNK_TOKEN }}
+
+      - name: Install SCA tool (CRDA)
+        uses: redhat-actions/openshift-tools-installer@v1
         with:
-          args: --sarif-file-output=snyk.sarif --severity-threshold=low
-          
-      - name: Check if SARIF file exists
-        id: check_sarif
-        run: |
-          if [ -f "snyk.sarif" ]; then
-            echo "sarif_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "sarif_exists=false" >> $GITHUB_OUTPUT
-            echo "Warning: snyk.sarif file was not created"
-          fi
-          
+          source: github
+          github_pat: ${{ github.token }}
+          crda: "latest"
+
+      - name: SCA (CRDA) Scan
+        id: scan
+        uses: redhat-actions/crda@v1
+        with:
+          snyk_token: ${{ secrets.OUR_SNYK_KEY }}
+          fail_on: never
+
+      - name: Print JSON analysis report
+        if: ${{ always() && steps.scan.outputs.crda_report_json }}
+        run: cat ${{ steps.scan.outputs.crda_report_json }}
+
+      - name: Print SARIF analysis report
+        if: ${{ always() && steps.scan.outputs.crda_report_sarif }}
+        run: cat ${{ steps.scan.outputs.crda_report_sarif }}
+
       - name: Upload result to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v3
-        if: steps.check_sarif.outputs.sarif_exists == 'true'
+        if: ${{ always() && steps.scan.outputs.crda_report_sarif }}
         with:
-          sarif_file: snyk.sarif
-          
-      - name: Run Snyk to monitor
-        uses: snyk/actions/golang@master
-        continue-on-error: true
-        env:
-          SNYK_TOKEN: ${{ secrets.SYNK_TOKEN }}
-        with:
-          command: monitor
+          sarif_file: ${{ steps.scan.outputs.crda_report_sarif }}
+
+      - name: Print Report Link
+        if: ${{ always() && steps.scan.outputs.report_link }}
+        run: echo ${{ steps.scan.outputs.report_link }}
+
+      - name: Print Artifact Name
+        if: ${{ always() && steps.scan.outputs.artifact_name }}
+        run: echo ${{ steps.scan.outputs.artifact_name }}
