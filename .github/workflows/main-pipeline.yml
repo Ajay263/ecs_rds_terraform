@@ -9,11 +9,12 @@ on:
 
 # Grant permissions that will be inherited by called workflows
 permissions:
+  actions: read          # ADDED: Required for SAST workflows
   contents: read
   issues: read
   checks: write
   pull-requests: write
-  security-events: write  # Needed for SCA to upload SARIF files
+  security-events: write  # Needed for SCA and SAST to upload SARIF files
   
 jobs:
   build:
@@ -26,6 +27,7 @@ jobs:
     name: SCA
     uses: ./.github/workflows/sca.yml
     secrets: inherit
+    
   sast:
     needs: build
     name: SAST
