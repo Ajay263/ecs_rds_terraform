@@ -42,7 +42,7 @@ jobs:
         id: scan
         uses: redhat-actions/crda@v1
         with:
-          snyk_token: ${{ secrets.OUR_SNYK_KEY }}
+          snyk_token: ${{ secrets.SYNK_TOKEN }}
           fail_on: never
 
       - name: Print JSON analysis report
