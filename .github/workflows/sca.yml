@@ -21,13 +21,21 @@ jobs:
           go mod download
           go mod verify
           
+      - name: Debug - Check actual dependencies
+        run: |
+          echo "=== Installed Go modules ==="
+          go list -m all
+          echo ""
+          echo "=== Dependency tree ==="
+          go mod graph | head -20
+          
       - name: Run Snyk to check for vulnerabilities
         uses: snyk/actions/golang@master
         continue-on-error: true
         env:
           SNYK_TOKEN: ${{ secrets.SYNK_TOKEN }}
         with:
-          args: --sarif-file-output=snyk.sarif
+          args: --sarif-file-output=snyk.sarif --severity-threshold=low
           
       - name: Check if SARIF file exists
         id: check_sarif
