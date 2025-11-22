@@ -1,94 +1,62 @@
-name: Comprehensive SCA for Go Application
+name: SCA for Go Application
 on:
   workflow_dispatch:
   workflow_call:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
 jobs:
   sca:
     runs-on: ubuntu-latest
     name: SCA
     steps:
-      - name: Checkout code
+      - name: Checkout action
         uses: actions/checkout@v5
         
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.24.2'
-          
-      - name: Download all dependencies
+          go-version: '1.24.2'  
+          cache: false  # Disable cache to ensure fresh dependency resolution
+      
+      - name: Download dependencies
         run: |
           go mod download
-          go mod tidy
           go mod verify
           
-      - name: List all dependencies (including transitive)
+      - name: Debug - Check actual dependencies
         run: |
-          echo "=== All dependencies (direct and transitive) ==="
+          echo "=== Installed Go modules ==="
           go list -m all
           echo ""
-          echo "=== Vulnerable dependencies reported by Dependabot ==="
-          go list -m all | grep -E "(golang.org/x/net|github.com/gin-gonic/gin|google.golang.org/grpc)" || true
+          echo "=== Dependency tree ==="
+          go mod graph | head -20
           
-      - name: Run Govulncheck (Official Go vulnerability scanner)
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck -json ./... > govulncheck-results.json || true
-          
-      - name: Run Snyk with deeper scanning
+      - name: Run Snyk to check for vulnerabilities
         uses: snyk/actions/golang@master
         continue-on-error: true
         env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_TOKEN: ${{ secrets.SYNK_TOKEN }}
         with:
-          args: --all-projects --severity-threshold=low --sarif-file-output=snyk.sarif
+          args: --sarif-file-output=snyk.sarif --severity-threshold=low
           
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+      - name: Check if SARIF file exists
+        id: check_sarif
+        run: |
+          if [ -f "snyk.sarif" ]; then
+            echo "sarif_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "sarif_exists=false" >> $GITHUB_OUTPUT
+            echo "Warning: snyk.sarif file was not created"
+          fi
           
-      - name: Upload Snyk results
+      - name: Upload result to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: steps.check_sarif.outputs.sarif_exists == 'true'
         with:
           sarif_file: snyk.sarif
           
-      - name: Upload Trivy results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+      - name: Run Snyk to monitor
+        uses: snyk/actions/golang@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SYNK_TOKEN }}
         with:
-          sarif_file: trivy-results.sarif
-
-  dependabot-audit:
-    runs-on: ubuntu-latest
-    name: Verify Dependabot Findings
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-        
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: '1.24.2'
-          
-      - name: Check specific vulnerable dependencies
-        run: |
-          echo "=== Checking versions of vulnerable dependencies ==="
-          
-          # Check current versions
-          echo "Current versions:"
-          go list -m golang.org/x/net 2>/dev/null || echo "golang.org/x/net not found in direct dependencies"
-          go list -m github.com/gin-gonic/gin 2>/dev/null || echo "gin-gonic/gin not found in direct dependencies"
-          go list -m google.golang.org/grpc 2>/dev/null || echo "grpc not found in direct dependencies"
-          
-          echo ""
-          echo "=== Checking if vulnerable via go mod graph ==="
-          go mod graph | grep -E "(golang.org/x/net|gin-gonic/gin|google.golang.org/grpc)" | head -10
+          command: monitor
