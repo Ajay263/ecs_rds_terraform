@@ -8,7 +8,7 @@ on:
   push:
     branches: [ main, develop ]
 
-# Permissions for workflow_call - inherited by caller
+# Permissions for workflow_call - inherited from caller
 permissions:
   actions: read
   contents: read
@@ -66,10 +66,6 @@ jobs:
     name: SAST Gosec (Go Security Scanner)
     needs: [SAST-CodeQL]
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -104,10 +100,6 @@ jobs:
     needs: [SAST-CodeQL]
     name: SAST Semgrep
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
     container:
       # A Docker image with Semgrep installed. Do not change this.
       image: returntocorp/semgrep
@@ -148,10 +140,6 @@ jobs:
     name: SAST Staticcheck (Go Linter)
     needs: [SAST-CodeQL]
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
