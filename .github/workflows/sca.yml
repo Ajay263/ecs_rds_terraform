@@ -10,7 +10,7 @@ on:
 jobs:
   sca:
     runs-on: ubuntu-latest
-    name: Comprehensive Security Scan
+    name: SCA
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
