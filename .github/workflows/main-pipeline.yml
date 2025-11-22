@@ -9,12 +9,13 @@ on:
 
 # Grant permissions that will be inherited by called workflows
 permissions:
-  actions: read          # ADDED: Required for SAST workflows
+  actions: read          # Required for SAST workflows
   contents: read
   issues: read
   checks: write
   pull-requests: write
   security-events: write  # Needed for SCA and SAST to upload SARIF files
+  packages: write         # ADD THIS LINE - Required for docker image push
   
 jobs:
   build:
@@ -33,14 +34,16 @@ jobs:
     name: SAST
     uses: ./.github/workflows/sast.yml
     secrets: inherit
+    
   docker:
     needs: build
     name: Build docker image
     uses: ./.github/workflows/docker.yml
     secrets: inherit
+    
   container-image-scan:
     needs: docker
-    name: Build docker image
+    name: Container Image Scan  # Fixed the name (was "Build docker image")
     uses: ./.github/workflows/container-image-scan.yml
     secrets: inherit
     with:
