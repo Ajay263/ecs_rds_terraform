@@ -1,37 +1,62 @@
-name: 20 SCA
-
+name: SCA for Go Application
 on:
   workflow_dispatch:
   workflow_call:
-  push:
-    branches:
-      - main
-      - develop
-  schedule:
-    # Mondays at 0000 UTC
-    - cron: "0 0 * * 1"
-
 jobs:
-  check-for-vulnerabilities:
-    name: Check for vulnerabilities using `govulncheck`
+  sca:
     runs-on: ubuntu-latest
-    permissions:
-      security-events: write
-      contents: read
+    name: SCA
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: golang/govulncheck-action@b625fbe08f3bccbe446d94fbf87fcc875a4f50ee # v1.0.4
-        continue-on-error: false
+      - name: Checkout action
+        uses: actions/checkout@v5
+        
+      - name: Setup Go
+        uses: actions/setup-go@v6
         with:
-          # NOTE that we want to produce the SARIF-formatted report, which can then be consumed by other tools ...
-          output-format: sarif
-          output-file: govulncheck.sarif
-          cache: false  # Disable caching to avoid cache service errors
-
-      # ... such as the Code Scanning tab
-      - name: Upload SARIF file
+          go-version: '1.24.2'  
+          cache: false  # Disable cache to ensure fresh dependency resolution
+      
+      - name: Download dependencies
+        run: |
+          go mod download
+          go mod verify
+          
+      - name: Debug - Check actual dependencies
+        run: |
+          echo "=== Installed Go modules ==="
+          go list -m all
+          echo ""
+          echo "=== Dependency tree ==="
+          go mod graph | head -20
+          
+      - name: Run Snyk to check for vulnerabilities
+        uses: snyk/actions/golang@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SYNK_TOKEN }}
+        with:
+          args: --sarif-file-output=snyk.sarif --severity-threshold=low
+          
+      - name: Check if SARIF file exists
+        id: check_sarif
+        run: |
+          if [ -f "snyk.sarif" ]; then
+            echo "sarif_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "sarif_exists=false" >> $GITHUB_OUTPUT
+            echo "Warning: snyk.sarif file was not created"
+          fi
+          
+      - name: Upload result to GitHub Code Scanning
         uses: github/codeql-action/upload-sarif@v3
+        if: steps.check_sarif.outputs.sarif_exists == 'true'
         with:
-          sarif_file: govulncheck.sarif
-          category: govulncheck
+          sarif_file: snyk.sarif
+          
+      - name: Run Snyk to monitor
+        uses: snyk/actions/golang@master
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SYNK_TOKEN }}
+        with:
+          command: monitor
