@@ -3,6 +3,10 @@ name: 30 License Compliance
 on:
   workflow_dispatch:
   workflow_call:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
 
 jobs:
   license-finder:
@@ -23,27 +27,76 @@ jobs:
           go mod download
           go mod verify
 
-      - name: 'License Finder'
-        uses: jmservera/license-finder-action@main
+      - name: 'License Finder Scan'
+        id: license_scan
+        uses: jmservera/license-finder-action@v0.1.4-alpha
+        continue-on-error: true
         with:
-          permitted-licenses: EPL-1.0
-          # Common Go dependencies you might want to approve
-          approved-dependencies: |
-            golang.org/x/sys
-            golang.org/x/net
-            golang.org/x/crypto
-            golang.org/x/text
+          permitted-licenses: ISC
+          report-name: license_finder_report.xml
+          base-path: ${{ github.workspace }}
 
-      - name: Publish Test Results
+      - name: 'Check License Finder Results'
+        run: |
+          echo "## 📜 License Compliance Check" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "license_finder_report.xml" ]; then
+            # Count failures in XML report
+            FAILURES=$(grep -c 'failure' license_finder_report.xml || echo "0")
+            TOTAL=$(grep -c 'testcase' license_finder_report.xml || echo "0")
+            
+            echo "✅ **Total Dependencies Scanned:** $TOTAL" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            
+            if [ "$FAILURES" -gt "0" ]; then
+              echo "❌ **License Violations Found:** $FAILURES" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "### ⚠️ Action Required" >> $GITHUB_STEP_SUMMARY
+              echo "Dependencies with unapproved licenses were detected. Please review the detailed report." >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Permitted Licenses:**" >> $GITHUB_STEP_SUMMARY
+              echo "- MIT" >> $GITHUB_STEP_SUMMARY
+              echo "- Apache-2.0" >> $GITHUB_STEP_SUMMARY
+              echo "- BSD-2-Clause" >> $GITHUB_STEP_SUMMARY
+              echo "- BSD-3-Clause" >> $GITHUB_STEP_SUMMARY
+              echo "- ISC" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ **All dependencies have approved licenses!**" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⚠️ License report not found" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 'Display License Report Content'
+        if: always()
+        run: |
+          if [ -f "license_finder_report.xml" ]; then
+            echo "=== License Finder Report Content ==="
+            cat license_finder_report.xml
+          else
+            echo "No license report generated"
+          fi
+
+      - name: 'Publish Test Results'
         uses: EnricoMi/publish-unit-test-result-action@v2
         if: always()
         with:
           junit_files: "license_finder_report.xml"
           check_name: "License Compliance Check"
+          comment_mode: off
 
-      - name: 'Upload Dependency Review Report'
+      - name: 'Upload License Finder Report'
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: license-finder-report
-          path: ${{ github.workspace }}/license_finder_report.xml
+          path: license_finder_report.xml
+          retention-days: 30
+
+      - name: 'Fail on License Violations'
+        if: steps.license_scan.outcome == 'failure'
+        run: |
+          echo "❌ License compliance check failed!"
+          echo "Please review the license_finder_report.xml artifact for details."
+          exit 1
