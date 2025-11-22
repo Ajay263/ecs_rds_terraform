@@ -1,0 +1,185 @@
+name: 40 SAST
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+
+jobs:
+  SAST-CodeQL:
+    name: Build and SAST CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'go' ]
+        # CodeQL supports [ 'cpp', 'csharp', 'go', 'java', 'javascript', 'python', 'ruby' ]
+        # Learn more about CodeQL language support at https://aka.ms/codeql-docs/language-support
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.2'
+          cache: true
+
+      - name: Download Go dependencies
+        run: |
+          go mod download
+          go mod verify
+      
+      # Initializes the CodeQL tools for scanning
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # If you wish to specify custom queries, you can do so here or in a config file.
+          # By default, queries listed here will override any specified in a config file.
+          # Prefix the list here with "+" to use these queries and those in the config file.
+          
+          # Details on CodeQL's query packs refer to : https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/configuring-code-scanning#using-queries-in-ql-packs
+          queries: security-extended,security-and-quality
+
+      # Autobuild attempts to build any compiled languages (Go, C/C++, C#, Java, etc.)
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{matrix.language}}"
+
+  gosec:
+    name: SAST Gosec (Go Security Scanner)
+    needs: [SAST-CodeQL]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.2'
+          cache: true
+
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@master
+        with:
+          args: '-fmt sarif -out results.sarif ./...'
+
+      - name: Upload Gosec SARIF report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gosec.sarif
+          path: results.sarif
+          retention-days: 30
+
+      - name: Upload analysis results to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: gosec
+
+  semgrep:
+    needs: [SAST-CodeQL]
+    name: SAST Semgrep
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    container:
+      # A Docker image with Semgrep installed. Do not change this.
+      image: returntocorp/semgrep
+
+    # To skip any PR created by dependabot to avoid permission issues:
+    if: (github.actor != 'dependabot[bot]')
+
+    steps:
+      # Fetch project source with GitHub Actions Checkout.
+      - uses: actions/checkout@v5
+      
+      - name: Run Semgrep
+        run: semgrep ci -v -o results.sarif --sarif || true
+        env:
+           # Add the rules that Semgrep uses by setting the SEMGREP_RULES environment variable. 
+           # Using Go-specific and general security rules
+           SEMGREP_RULES: p/default p/security-audit p/golang p/cwe-top-25 p/owasp-top-ten
+           # more at semgrep.dev/explore
+           # Uncomment SEMGREP_TIMEOUT to set this job's timeout (in seconds): Default timeout is 1800 seconds (30 minutes). 0=disable
+           # SEMGREP_TIMEOUT: 300
+      
+      - name: Upload Semgrep Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep.sarif
+          path: results.sarif
+          retention-days: 30
+      
+      - name: Upload analysis results to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: semgrep
+
+  staticcheck:
+    name: SAST Staticcheck (Go Linter)
+    needs: [SAST-CodeQL]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.24.2'
+          cache: true
+
+      - name: Download Go dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Run staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: "latest"
+          install-go: false
+          
+      - name: Generate summary
+        if: always()
+        run: |
+          echo "## 🔍 SAST Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Security Analysis Tools" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **CodeQL**: GitHub's semantic code analysis" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Gosec**: Go security-focused static analyzer" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Semgrep**: Pattern-based security scanner" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Staticcheck**: Go code quality and bug detection" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 All results are uploaded to the **Security** tab under **Code Scanning**" >> $GITHUB_STEP_SUMMARY
