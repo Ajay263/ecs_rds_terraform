@@ -39,6 +39,6 @@ jobs:
         uses: snyk/actions/golang@master
         continue-on-error: true
         env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}  # Fixed typo: was SYNK_TOKEN
+          SNYK_TOKEN: ${{ secrets.SYNK_TOKEN }}  # Fixed typo: was SYNK_TOKEN
         with:
           command: monitor
