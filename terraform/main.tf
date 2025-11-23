@@ -5,9 +5,9 @@ module "staging" {
   name            = "staging"
 }
 
-module "prod" {
-  source = "./module/environment"
+# module "prod" {
+#   source = "./module/environment"
 
-  bastion_ingress = local.bastion_ingress
-  name            = "prod"
-}
+#   bastion_ingress = local.bastion_ingress
+#   name            = "prod"
+# }
