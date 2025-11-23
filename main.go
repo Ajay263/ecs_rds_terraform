@@ -255,9 +255,20 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// Check if user exists and is not banned
 		var isBanned bool
 		err = db.QueryRow("SELECT is_banned FROM users WHERE email = $1", email).Scan(&isBanned)
 		if err != nil {
+			if err == sql.ErrNoRows {
+				// User doesn't exist in database, clear session and redirect
+				log.Printf("User not found in database: %s", email)
+				session.Values["email"] = nil
+				session.Options.MaxAge = -1
+				session.Save(r, w)
+				http.Redirect(w, r, "/", http.StatusSeeOther)
+				return
+			}
+			// Other database error
 			log.Printf("Error checking user ban status: %v", err)
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
@@ -476,15 +487,18 @@ func googleCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		if err == sql.ErrNoRows {
 			// User doesn't exist, create a new user with a random username
 			randomUsername := generateRandomUsername()
-			_, err = db.Exec("INSERT INTO users (email, profile_image_url, username) VALUES ($1, $2, $3)", email, profileImageURL, randomUsername)
+			err = db.QueryRow("INSERT INTO users (email, profile_image_url, username, is_banned) VALUES ($1, $2, $3, false) RETURNING id",
+				email, profileImageURL, randomUsername).Scan(&userID)
 			if err != nil {
+				log.Printf("Failed to create user: %v", err)
 				http.Error(w, "Failed to create user: "+err.Error(), http.StatusInternalServerError)
 				return
 			}
 
+			log.Printf("Created new user with ID %d, email %s, username %s", userID, email, randomUsername)
+
 			// Set session values
 			session.Values["email"] = email
-			session.Values["newUser"] = true
 			err = session.Save(r, w)
 			if err != nil {
 				http.Error(w, "Failed to save session: "+err.Error(), http.StatusInternalServerError)
@@ -514,6 +528,8 @@ func googleCallbackHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to save session: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	log.Printf("User %s logged in successfully", email)
 	http.Redirect(w, r, "/profile", http.StatusFound)
 }
 
