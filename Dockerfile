@@ -3,6 +3,9 @@ FROM public.ecr.aws/docker/library/golang:1.24.2-alpine
 # Set the working directory
 WORKDIR /app
 
+# Install goose migration tool
+RUN go install github.com/pressly/goose/v3/cmd/goose@latest
+
 # Copy the go.mod and go.sum files
 COPY go.mod go.sum ./
 
