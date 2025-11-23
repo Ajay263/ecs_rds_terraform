@@ -79,36 +79,13 @@ jobs:
           echo "cluster=staging" >> $GITHUB_OUTPUT
           echo "service=staging-service" >> $GITHUB_OUTPUT
 
-      - name: Pull Docker image
-        env:
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
-        run: |
-          docker pull ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
-
-      - name: Promote image tag to staging
-        env:
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
-        run: |
-          echo "Tagging image $IMAGE_TAG as staging"
-          
-          docker pull ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
-
-          docker tag \
-            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG \
-            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:staging
-
-          docker push \
-            ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:staging
-          
-          echo "✅ Image promoted to staging tag"
-
       - name: Run database migrations
         env:
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
           CLUSTER_NAME: ${{ steps.vars.outputs.cluster }}
           SERVICE_NAME: ${{ steps.vars.outputs.service }}
         run: |
-          # Option 1: Fetch from SSM and pass as environment variable (current approach)
+          # Fetch database connection string from SSM
           DB_STRING=$(aws ssm get-parameter \
             --name "/staging/service/postgres-url" \
             --with-decryption \
@@ -137,28 +114,6 @@ jobs:
             ]
           }
           EOF
-          
-          # Alternative Option 2: Use ECS secrets (more secure - uncomment to use)
-          # This requires your task execution role to have ssm:GetParameters permission
-          # cat > overrides.json <<EOF
-          # {
-          #   "containerOverrides": [
-          #     {
-          #       "name": "service",
-          #       "environment": [
-          #         { "name": "GOOSE_DRIVER", "value": "postgres" }
-          #       ],
-          #       "secrets": [
-          #         {
-          #           "name": "GOOSE_DBSTRING",
-          #           "valueFrom": "/staging/service/postgres-url"
-          #         }
-          #       ],
-          #       "command": ["goose", "-dir", "migrations", "up"]
-          #     }
-          #   ]
-          # }
-          # EOF
 
           echo "Starting migration task..."
           
@@ -221,10 +176,12 @@ jobs:
 
           echo "✅ Migrations completed successfully"
 
-      - name: Promote image tag
+      - name: Promote image tag to staging
         env:
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
         run: |
+          echo "Tagging image $IMAGE_TAG as staging"
+          
           docker pull ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
 
           docker tag \
@@ -233,6 +190,8 @@ jobs:
 
           docker push \
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:staging
+          
+          echo "✅ Image promoted to staging tag"
 
       - name: Deploy to ECS
         env:
@@ -282,19 +241,13 @@ jobs:
           echo "cluster=prod" >> $GITHUB_OUTPUT
           echo "service=prod-service" >> $GITHUB_OUTPUT
 
-      - name: Pull Docker image
-        env:
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
-        run: |
-          docker pull ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
-
       - name: Run database migrations
         env:
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
           CLUSTER_NAME: ${{ steps.vars.outputs.cluster }}
           SERVICE_NAME: ${{ steps.vars.outputs.service }}
         run: |
-          # Option 1: Fetch from SSM and pass as environment variable (current approach)
+          # Fetch database connection string from SSM
           DB_STRING=$(aws ssm get-parameter \
             --name "/prod/service/postgres-url" \
             --with-decryption \
@@ -323,28 +276,6 @@ jobs:
             ]
           }
           EOF
-          
-          # Alternative Option 2: Use ECS secrets (more secure - uncomment to use)
-          # This requires your task execution role to have ssm:GetParameters permission
-          # cat > overrides.json <<EOF
-          # {
-          #   "containerOverrides": [
-          #     {
-          #       "name": "service",
-          #       "environment": [
-          #         { "name": "GOOSE_DRIVER", "value": "postgres" }
-          #       ],
-          #       "secrets": [
-          #         {
-          #           "name": "GOOSE_DBSTRING",
-          #           "valueFrom": "/prod/service/postgres-url"
-          #         }
-          #       ],
-          #       "command": ["goose", "-dir", "migrations", "up"]
-          #     }
-          #   ]
-          # }
-          # EOF
 
           echo "Starting migration task..."
           
@@ -407,10 +338,12 @@ jobs:
 
           echo "✅ Migrations completed successfully"
 
-      - name: Promote image tag
+      - name: Promote image tag to production
         env:
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image-tag }}
         run: |
+          echo "Tagging image $IMAGE_TAG as prod"
+          
           docker pull ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:$IMAGE_TAG
 
           docker tag \
@@ -419,6 +352,8 @@ jobs:
 
           docker push \
             ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:prod
+          
+          echo "✅ Image promoted to prod tag"
 
       - name: Deploy to ECS
         env:
